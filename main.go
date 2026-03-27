@@ -22,18 +22,18 @@ type Asteroid struct {
 const (
 	spaceShipMaxHp       int32   = 5
 	spaceShipRadius      float32 = 26.
-	spaceShipSpeed       float32 = 5
+	spaceShipSpeed       float32 = 250
 	asteroidsAmount      int32   = 12
 	asteroidMaxHP        int32   = 3
 	asteroidRadius       float32 = 50.
-	asteroidSpeed        float32 = .005
-	asteroidSpawnZone            = 40
+	asteroidSpeed        float32 = 80
+	spaceShipSpawnZone   float32 = 40.
 	asteroidCollisionDmg int32   = 1
-	wHeight              float32 = 800
-	wWidth               float32 = 800
+	wHeight              float32 = 1080
+	wWidth               float32 = 1920
 )
 
-func SpawnAsteroids(asteroids *[asteroidsAmount]Asteroid) {
+func SpawnAsteroids(s *SpaceShip, asteroids *[asteroidsAmount]Asteroid) {
 	width := int32(wWidth)
 	height := int32(wHeight)
 	for i := range asteroidsAmount {
@@ -43,40 +43,44 @@ func SpawnAsteroids(asteroids *[asteroidsAmount]Asteroid) {
 			HP:       asteroidMaxHP,
 			ID:       i,
 		}
+		for {
+			if !rl.CheckCollisionCircles(s.Center, spaceShipRadius+spaceShipSpawnZone, asteroids[i].Center, asteroidRadius) {
+				break
+			}
+			asteroids[i].Center = rl.Vector2{X: float32(rl.GetRandomValue(0, width)), Y: float32(rl.GetRandomValue(0, height))}
+		}
 	}
 }
 
 func DrawAsteroids(asteroids *[asteroidsAmount]Asteroid) {
 	for i := range asteroids {
-		asteroid := asteroids[i]
-		rl.DrawCircleLinesV(asteroid.Center, asteroidRadius, rl.White)
+		rl.DrawCircleLinesV(asteroids[i].Center, asteroidRadius, rl.White)
 	}
 }
 
 func HandleControls() rl.Vector2 {
-	desiredVector := rl.Vector2{}
-	if rl.IsKeyPressed(rl.KeyDown) || rl.IsKeyPressed(rl.KeyS) || rl.IsKeyDown(rl.KeyDown) || rl.IsKeyDown(rl.KeyS) {
-		// s.Center.Y = min(s.Center.Y+spaceShipSpeed, wHeight-spaceShipRadius)
-		desiredVector.Y += spaceShipSpeed
-	}
+	direction := rl.Vector2{}
 	if rl.IsKeyPressed(rl.KeyUp) || rl.IsKeyPressed(rl.KeyW) || rl.IsKeyDown(rl.KeyUp) || rl.IsKeyDown(rl.KeyW) {
-		// s.Center.Y = max(s.Center.Y-spaceShipSpeed, spaceShipRadius)
-		desiredVector.Y -= spaceShipSpeed
+		direction.Y -= 1
+	}
+	if rl.IsKeyPressed(rl.KeyDown) || rl.IsKeyPressed(rl.KeyS) || rl.IsKeyDown(rl.KeyDown) || rl.IsKeyDown(rl.KeyS) {
+		direction.Y += 1
 	}
 	if rl.IsKeyPressed(rl.KeyLeft) || rl.IsKeyPressed(rl.KeyA) || rl.IsKeyDown(rl.KeyLeft) || rl.IsKeyDown(rl.KeyA) {
-		// s.Center.X = max(s.Center.X-spaceShipSpeed, spaceShipRadius)
-		desiredVector.X -= spaceShipSpeed
+		direction.X -= 1
 	}
 	if rl.IsKeyPressed(rl.KeyRight) || rl.IsKeyPressed(rl.KeyD) || rl.IsKeyDown(rl.KeyRight) || rl.IsKeyDown(rl.KeyD) {
-		// s.Center.X = min(s.Center.X+spaceShipSpeed, wWidth-spaceShipRadius)
-		desiredVector.X += spaceShipSpeed
+		direction.X += 1
 	}
-	return desiredVector
+	if direction.X != 0 || direction.Y != 0 {
+		direction = rl.Vector2Normalize(direction)
+	}
+	return direction
 }
 
+// Returns a Vector2 that shows if the window collision happened. If center is greater than max axis,
+// the value for that coordinate will be 1, if less than min axis, the value will be -1. 0 if no collision.
 func ApplyWindowBounds(center *rl.Vector2, radius float32) rl.Vector2 {
-	// Returns a Vector2 that shows if the window collision happened. If center is greater than max axis,
-	// the value for that coordinate will be 1, if less than min axis, the value will be -1. 0 if no collision.
 	windowCollision := rl.Vector2{}
 	if center.X > wWidth-radius {
 		center.X = wWidth - radius
@@ -95,37 +99,39 @@ func ApplyWindowBounds(center *rl.Vector2, radius float32) rl.Vector2 {
 	return windowCollision
 }
 
-func MoveSpaceShip(s *SpaceShip, desiredVector rl.Vector2, asteroids *[asteroidsAmount]Asteroid) {
-	// Applies desiredVector to the space ship and checks for collisions.
+// Applies direction and velocity to the space ship and checks for collisions.
+func MoveSpaceShip(s *SpaceShip, direction rl.Vector2, asteroids *[asteroidsAmount]Asteroid, dt float32) {
 	oldCenter := s.Center
-	s.Center = rl.Vector2Add(s.Center, desiredVector)
+	velocity := rl.Vector2Scale(direction, spaceShipSpeed*dt)
+	s.Center = rl.Vector2Add(s.Center, velocity)
 	ApplyWindowBounds(&s.Center, spaceShipRadius)
 	for i := range asteroidsAmount {
 		if rl.CheckCollisionCircles(s.Center, spaceShipRadius, asteroids[i].Center, asteroidRadius) {
 			s.HP -= asteroidCollisionDmg
 			s.Center = oldCenter
+			break
 		}
 	}
 }
 
-func MoveAsteroids(s *SpaceShip, asteroids *[asteroidsAmount]Asteroid) {
+// Applies direction and velocity to all the asteroids and checks for collisions.
+func MoveAsteroids(s *SpaceShip, asteroids *[asteroidsAmount]Asteroid, dt float32) {
 	for i := range asteroidsAmount {
 		oldCenter := asteroids[i].Center
-		asteroids[i].Center = rl.Vector2Add(
-			asteroids[i].Center,
-			rl.Vector2{X: asteroids[i].Rotation.X * asteroidSpeed, Y: asteroids[i].Rotation.Y * asteroidSpeed},
-		)
+		direction := rl.Vector2Normalize(asteroids[i].Rotation)
+		velocity := rl.Vector2Scale(direction, asteroidSpeed*dt)
+		asteroids[i].Center = rl.Vector2Add(asteroids[i].Center, velocity)
 		if rl.CheckCollisionCircles(s.Center, spaceShipRadius, asteroids[i].Center, asteroidRadius) {
-			asteroids[i].Rotation = rl.Vector2{X: -asteroids[i].Rotation.X, Y: -asteroids[i].Rotation.Y}
+			asteroids[i].Rotation = rl.Vector2Scale(asteroids[i].Rotation, -1)
 			s.HP -= asteroidCollisionDmg
 			asteroids[i].Center = oldCenter
 		}
 		windowCollision := ApplyWindowBounds(&asteroids[i].Center, asteroidRadius)
 		if windowCollision.X != 0 {
-			asteroids[i].Rotation.X = -asteroids[i].Rotation.X
+			asteroids[i].Rotation.X *= -1
 		}
 		if windowCollision.Y != 0 {
-			asteroids[i].Rotation.Y = -asteroids[i].Rotation.Y
+			asteroids[i].Rotation.Y *= -1
 		}
 	}
 }
@@ -136,19 +142,20 @@ func Asteroids() {
 	rl.SetTargetFPS(60)
 
 	s := SpaceShip{
-		Center: rl.Vector2{X: float32(wWidth) / 2, Y: float32(wHeight) / 2},
+		Center: rl.Vector2{X: float32(wWidth) / 2, Y: float32(wHeight) - float32(wHeight)/3},
 		HP:     spaceShipMaxHp,
 	}
 	asteroids := [asteroidsAmount]Asteroid{}
-	SpawnAsteroids(&asteroids)
+	SpawnAsteroids(&s, &asteroids)
 	for !rl.WindowShouldClose() {
+		dt := rl.GetFrameTime()
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.Black)
 		rl.DrawText(fmt.Sprintf("HP: %d", s.HP), 0, 0, 24, rl.Yellow)
-		MoveAsteroids(&s, &asteroids)
+		MoveAsteroids(&s, &asteroids, dt)
 		DrawAsteroids(&asteroids)
-		desiredVector := HandleControls()
-		MoveSpaceShip(&s, desiredVector, &asteroids)
+		direction := HandleControls()
+		MoveSpaceShip(&s, direction, &asteroids, dt)
 		rl.DrawCircleLinesV(s.Center, spaceShipRadius, rl.Yellow)
 
 		rl.EndDrawing()
