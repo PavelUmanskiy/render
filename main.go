@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
@@ -21,25 +22,41 @@ type SpaceShip struct {
 	HP       int32
 }
 
+type Bullet struct {
+	Base  rl.Vector2
+	End   rl.Vector2
+	Dir   rl.Vector2
+	Alive bool
+	ID    int32
+}
+
 type Asteroid struct {
 	Center   rl.Vector2
 	Rotation rl.Vector2
 	HP       int32
 	ID       int32
+	Alive    bool
 }
 
 const (
 	spaceShipMaxHp  int32   = 5
-	spaceShipRadius float32 = 26.
+	spaceShipRadius float32 = 26
 	spaceShipSpeed  float32 = 250
+)
+
+const (
+	bulletsAmount int32   = 30
+	bulletLength  float32 = 15
+	bulletSpeed   float32 = 280
+	bulletCD      float32 = 0.5
 )
 
 const (
 	asteroidsAmount      int32   = 12
 	asteroidMaxHP        int32   = 3
-	asteroidRadius       float32 = 50.
+	asteroidRadius       float32 = 50
 	asteroidSpeed        float32 = 80
-	spaceShipSpawnZone   float32 = 40.
+	spaceShipSpawnZone   float32 = 40
 	asteroidCollisionDmg int32   = 1
 )
 
@@ -47,7 +64,7 @@ const (
 	ivMaxSec    = 1.5
 	ivCurrSec   = 1.5
 	ivCDMaxSec  = 3.
-	ivCDCurrSec = 0.
+	ivCDCurrSec = 3.
 )
 
 const (
@@ -59,24 +76,37 @@ func SpawnAsteroids(s *SpaceShip, asteroids *[asteroidsAmount]Asteroid) {
 	width := int32(wWidth)
 	height := int32(wHeight)
 	for i := range asteroidsAmount {
-		asteroids[i] = Asteroid{
-			Center:   rl.Vector2{X: float32(rl.GetRandomValue(0, width)), Y: float32(rl.GetRandomValue(0, height))},
-			Rotation: rl.Vector2{X: float32(rl.GetRandomValue(-width, width)), Y: float32(rl.GetRandomValue(-height, height))},
-			HP:       asteroidMaxHP,
-			ID:       i,
-		}
-		for {
-			if !rl.CheckCollisionCircles(s.Center, spaceShipRadius+spaceShipSpawnZone, asteroids[i].Center, asteroidRadius) {
-				break
+		if !asteroids[i].Alive {
+			asteroids[i] = Asteroid{
+				Center:   rl.Vector2{X: float32(rl.GetRandomValue(0, width)), Y: float32(rl.GetRandomValue(0, height))},
+				Rotation: rl.Vector2{X: float32(rl.GetRandomValue(-width, width)), Y: float32(rl.GetRandomValue(-height, height))},
+				HP:       asteroidMaxHP,
+				ID:       i,
+				Alive:    true,
 			}
-			asteroids[i].Center = rl.Vector2{X: float32(rl.GetRandomValue(0, width)), Y: float32(rl.GetRandomValue(0, height))}
+			for {
+				if !rl.CheckCollisionCircles(s.Center, spaceShipRadius+spaceShipSpawnZone, asteroids[i].Center, asteroidRadius) {
+					break
+				}
+				asteroids[i].Center = rl.Vector2{X: float32(rl.GetRandomValue(0, width)), Y: float32(rl.GetRandomValue(0, height))}
+			}
 		}
 	}
 }
 
 func DrawAsteroids(asteroids *[asteroidsAmount]Asteroid) {
 	for i := range asteroids {
-		rl.DrawCircleLinesV(asteroids[i].Center, asteroidRadius, rl.White)
+		if asteroids[i].Alive {
+			rl.DrawCircleLinesV(asteroids[i].Center, asteroidRadius, rl.White)
+		}
+	}
+}
+
+func DrawBullets(bullets []Bullet) {
+	for i := range len(bullets) {
+		if bullets[i].Alive {
+			rl.DrawLineV(bullets[i].Base, bullets[i].End, rl.White)
+		}
 	}
 }
 
@@ -98,6 +128,13 @@ func HandleControls() rl.Vector2 {
 		direction = rl.Vector2Normalize(direction)
 	}
 	return direction
+}
+
+func HandleMouse(s *SpaceShip) {
+	delta := rl.Vector2Subtract(rl.GetMousePosition(), s.Center)
+	if rl.Vector2Length(delta) > 0 {
+		s.Rotation = rl.Vector2Normalize(delta)
+	}
 }
 
 // Returns a Vector2 that shows if the window collision happened. If center is greater than max axis,
@@ -128,7 +165,7 @@ func MoveAsteroids(s *SpaceShip, asteroids *[asteroidsAmount]Asteroid, dt float3
 		direction := rl.Vector2Normalize(asteroids[i].Rotation)
 		velocity := rl.Vector2Scale(direction, asteroidSpeed*dt)
 		asteroids[i].Center = rl.Vector2Add(asteroids[i].Center, velocity)
-		if rl.CheckCollisionCircles(s.Center, spaceShipRadius, asteroids[i].Center, asteroidRadius) {
+		if asteroids[i].Alive && rl.CheckCollisionCircles(s.Center, spaceShipRadius, asteroids[i].Center, asteroidRadius) {
 			asteroids[i].Rotation = rl.Vector2Scale(asteroids[i].Rotation, -1)
 			s.HP -= asteroidCollisionDmg
 			asteroids[i].Center = oldCenter
@@ -150,11 +187,28 @@ func MoveSpaceShip(s *SpaceShip, direction rl.Vector2, asteroids *[asteroidsAmou
 	s.Center = rl.Vector2Add(s.Center, velocity)
 	ApplyWindowBounds(&s.Center, spaceShipRadius)
 	for i := range asteroidsAmount {
-		if rl.CheckCollisionCircles(s.Center, spaceShipRadius, asteroids[i].Center, asteroidRadius) {
+		if asteroids[i].Alive && rl.CheckCollisionCircles(s.Center, spaceShipRadius, asteroids[i].Center, asteroidRadius) {
 			s.HP -= asteroidCollisionDmg
 			s.Center = oldCenter
 			break
 		}
+	}
+}
+
+func DrawSpaceShip(s *SpaceShip, invuln *IvState) {
+	rl.DrawCircleLinesV(s.Center, spaceShipRadius, rl.Yellow)
+	tipOffset := rl.Vector2Scale(s.Rotation, spaceShipRadius+10)
+	tip := rl.Vector2Add(s.Center, tipOffset)
+	backwardDir := rl.Vector2Scale(s.Rotation, -1)
+	leftWingDir := rl.Vector2Rotate(backwardDir, -70)
+	rightWingDir := rl.Vector2Rotate(backwardDir, 70)
+	leftWing := rl.Vector2Add(tip, rl.Vector2Scale(leftWingDir, 15))
+	rightWing := rl.Vector2Add(tip, rl.Vector2Scale(rightWingDir, 15))
+	rl.DrawLineV(tip, leftWing, rl.Green)
+	rl.DrawLineV(tip, rightWing, rl.Red)
+
+	if invuln.IvActive {
+		rl.DrawCircleLinesV(s.Center, spaceShipRadius*1.5, rl.Green)
 	}
 }
 
@@ -196,14 +250,47 @@ func HandleHP(state *IvState, prevHP, currHP int32, dt float32) (int32, rl.Color
 	return resultHP, drawColor
 }
 
+func FireBullet(s *SpaceShip, bullets []Bullet, bulletTime *float32, dt float32) []Bullet {
+	*bulletTime -= dt
+	if *bulletTime > 0 {
+		return bullets
+	}
+	direction := rl.Vector2Normalize(s.Rotation)
+	bulletBase := rl.Vector2Add(s.Center, rl.Vector2Scale(direction, spaceShipRadius))
+	bulletEnd := rl.Vector2Add(bulletBase, rl.Vector2Scale(direction, bulletLength))
+	*bulletTime = bulletCD
+	return append(bullets, Bullet{Base: bulletBase, End: bulletEnd, Dir: direction, Alive: true})
+}
+
+func MoveBullets(bullets []Bullet, asteroids *[asteroidsAmount]Asteroid, score *int32, dt float32) {
+	for i := range len(bullets) {
+		velocity := rl.Vector2Scale(bullets[i].Dir, bulletSpeed*dt)
+		bullets[i].Base = rl.Vector2Add(bullets[i].Base, velocity)
+		bullets[i].End = rl.Vector2Add(bullets[i].End, velocity)
+		windowCollision := ApplyWindowBounds(&bullets[i].End, 1)
+		if windowCollision.X != 0 || windowCollision.Y != 0 {
+			bullets[i].Alive = false
+		}
+		for j := range asteroidsAmount {
+			if asteroids[j].Alive && bullets[i].Alive && rl.CheckCollisionPointCircle(bullets[i].Base, asteroids[j].Center, asteroidRadius) {
+				bullets[i].Alive = false
+				asteroids[j].Alive = false
+				*score++
+			}
+		}
+	}
+}
+
 func Asteroids() {
 	rl.InitWindow(int32(wWidth), int32(wHeight), "Asteroids")
 	defer rl.CloseWindow()
 	rl.SetTargetFPS(60)
+	var score int32
 
 	s := SpaceShip{
-		Center: rl.Vector2{X: float32(wWidth) / 2, Y: float32(wHeight) - float32(wHeight)/3},
-		HP:     spaceShipMaxHp,
+		Center:   rl.Vector2{X: float32(wWidth) / 2, Y: float32(wHeight) - float32(wHeight)/3},
+		HP:       spaceShipMaxHp,
+		Rotation: rl.NewVector2(1, 0),
 	}
 	invuln := IvState{
 		IvMaxSec:    ivMaxSec,
@@ -214,10 +301,11 @@ func Asteroids() {
 		IvCDActive:  false,
 	}
 	asteroids := [asteroidsAmount]Asteroid{}
-	SpawnAsteroids(&s, &asteroids)
+	var bulletTime float32 = bulletCD
+	bullets := make([]Bullet, 0, 30)
 	for !rl.WindowShouldClose() {
 		dt := rl.GetFrameTime()
-
+		SpawnAsteroids(&s, &asteroids)
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.Black)
 		rl.DrawText(fmt.Sprintf("HP: %d", s.HP), 0, 0, 24, rl.Yellow)
@@ -226,12 +314,19 @@ func Asteroids() {
 		DrawAsteroids(&asteroids)
 		direction := HandleControls()
 		MoveSpaceShip(&s, direction, &asteroids, dt)
+		HandleMouse(&s)
 		currHP := s.HP
 		resultHP, invulnColor := HandleHP(&invuln, prevHP, currHP, dt)
 		s.HP = resultHP
+
+		bullets = FireBullet(&s, bullets, &bulletTime, dt)
+		MoveBullets(bullets, &asteroids, &score, dt)
+		bullets = slices.DeleteFunc(bullets, func(b Bullet) bool { return !b.Alive })
+		DrawBullets(bullets)
+		DrawSpaceShip(&s, &invuln)
 		rl.DrawText(fmt.Sprintf("IV: %.2f", invuln.IvCurrSec), 0, 26, 24, invulnColor)
 		rl.DrawText(fmt.Sprintf("CD: %.2f", invuln.IvCDCurrSec), 0, 52, 24, rl.Yellow)
-		rl.DrawCircleLinesV(s.Center, spaceShipRadius, rl.Yellow)
+		rl.DrawText(fmt.Sprintf("SC: %d", score), 0, 78, 24, rl.White)
 
 		rl.EndDrawing()
 	}
