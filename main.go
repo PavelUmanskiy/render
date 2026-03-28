@@ -6,6 +6,15 @@ import (
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
+type IvState struct {
+	IvMaxSec    float32
+	IvCurrSec   float32
+	IvCDMaxSec  float32
+	IvCDCurrSec float32
+	IvActive    bool
+	IvCDActive  bool
+}
+
 type SpaceShip struct {
 	Center   rl.Vector2
 	Rotation rl.Vector2
@@ -20,17 +29,30 @@ type Asteroid struct {
 }
 
 const (
-	spaceShipMaxHp       int32   = 5
-	spaceShipRadius      float32 = 26.
-	spaceShipSpeed       float32 = 250
+	spaceShipMaxHp  int32   = 5
+	spaceShipRadius float32 = 26.
+	spaceShipSpeed  float32 = 250
+)
+
+const (
 	asteroidsAmount      int32   = 12
 	asteroidMaxHP        int32   = 3
 	asteroidRadius       float32 = 50.
 	asteroidSpeed        float32 = 80
 	spaceShipSpawnZone   float32 = 40.
 	asteroidCollisionDmg int32   = 1
-	wHeight              float32 = 1080
-	wWidth               float32 = 1920
+)
+
+const (
+	ivMaxSec    = 1.5
+	ivCurrSec   = 1.5
+	ivCDMaxSec  = 3.
+	ivCDCurrSec = 0.
+)
+
+const (
+	wHeight float32 = 1080
+	wWidth  float32 = 1920
 )
 
 func SpawnAsteroids(s *SpaceShip, asteroids *[asteroidsAmount]Asteroid) {
@@ -99,21 +121,6 @@ func ApplyWindowBounds(center *rl.Vector2, radius float32) rl.Vector2 {
 	return windowCollision
 }
 
-// Applies direction and velocity to the space ship and checks for collisions.
-func MoveSpaceShip(s *SpaceShip, direction rl.Vector2, asteroids *[asteroidsAmount]Asteroid, dt float32) {
-	oldCenter := s.Center
-	velocity := rl.Vector2Scale(direction, spaceShipSpeed*dt)
-	s.Center = rl.Vector2Add(s.Center, velocity)
-	ApplyWindowBounds(&s.Center, spaceShipRadius)
-	for i := range asteroidsAmount {
-		if rl.CheckCollisionCircles(s.Center, spaceShipRadius, asteroids[i].Center, asteroidRadius) {
-			s.HP -= asteroidCollisionDmg
-			s.Center = oldCenter
-			break
-		}
-	}
-}
-
 // Applies direction and velocity to all the asteroids and checks for collisions.
 func MoveAsteroids(s *SpaceShip, asteroids *[asteroidsAmount]Asteroid, dt float32) {
 	for i := range asteroidsAmount {
@@ -136,6 +143,59 @@ func MoveAsteroids(s *SpaceShip, asteroids *[asteroidsAmount]Asteroid, dt float3
 	}
 }
 
+// Applies direction and velocity to the space ship and checks for collisions.
+func MoveSpaceShip(s *SpaceShip, direction rl.Vector2, asteroids *[asteroidsAmount]Asteroid, dt float32) {
+	oldCenter := s.Center
+	velocity := rl.Vector2Scale(direction, spaceShipSpeed*dt)
+	s.Center = rl.Vector2Add(s.Center, velocity)
+	ApplyWindowBounds(&s.Center, spaceShipRadius)
+	for i := range asteroidsAmount {
+		if rl.CheckCollisionCircles(s.Center, spaceShipRadius, asteroids[i].Center, asteroidRadius) {
+			s.HP -= asteroidCollisionDmg
+			s.Center = oldCenter
+			break
+		}
+	}
+}
+
+func HandleHP(state *IvState, prevHP, currHP int32, dt float32) (int32, rl.Color) {
+	// iv active
+	if state.IvActive && state.IvCurrSec > 0 {
+		state.IvCurrSec -= dt
+		// iv active but just ran out
+	} else if state.IvActive && state.IvCurrSec <= 0 {
+		state.IvActive = false
+		state.IvCDActive = true
+		state.IvCurrSec = ivMaxSec
+		// iv on cd
+	} else if state.IvCDActive && state.IvCDCurrSec > 0 {
+		state.IvCDCurrSec -= dt
+		// iv on cd but just ran out
+	} else if state.IvCDActive && state.IvCDCurrSec <= 0 {
+		state.IvCDActive = false
+		state.IvCDCurrSec = ivCDMaxSec
+		// iv ready
+	} else if !state.IvCDActive && prevHP != currHP {
+		state.IvActive = true
+	}
+	// Determine color
+	// Green - iv ready
+	// Yellow - iv active
+	// Red - iv on cd
+	var drawColor rl.Color = rl.Green
+	if state.IvActive {
+		drawColor = rl.Yellow
+	} else if state.IvCDActive {
+		drawColor = rl.Red
+	}
+	// HP logic
+	resultHP := currHP
+	if state.IvActive || prevHP == currHP {
+		resultHP = prevHP
+	}
+	return resultHP, drawColor
+}
+
 func Asteroids() {
 	rl.InitWindow(int32(wWidth), int32(wHeight), "Asteroids")
 	defer rl.CloseWindow()
@@ -145,17 +205,32 @@ func Asteroids() {
 		Center: rl.Vector2{X: float32(wWidth) / 2, Y: float32(wHeight) - float32(wHeight)/3},
 		HP:     spaceShipMaxHp,
 	}
+	invuln := IvState{
+		IvMaxSec:    ivMaxSec,
+		IvCurrSec:   ivCurrSec,
+		IvCDMaxSec:  ivCDMaxSec,
+		IvCDCurrSec: ivCDCurrSec,
+		IvActive:    false,
+		IvCDActive:  false,
+	}
 	asteroids := [asteroidsAmount]Asteroid{}
 	SpawnAsteroids(&s, &asteroids)
 	for !rl.WindowShouldClose() {
 		dt := rl.GetFrameTime()
+
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.Black)
 		rl.DrawText(fmt.Sprintf("HP: %d", s.HP), 0, 0, 24, rl.Yellow)
+		prevHP := s.HP
 		MoveAsteroids(&s, &asteroids, dt)
 		DrawAsteroids(&asteroids)
 		direction := HandleControls()
 		MoveSpaceShip(&s, direction, &asteroids, dt)
+		currHP := s.HP
+		resultHP, invulnColor := HandleHP(&invuln, prevHP, currHP, dt)
+		s.HP = resultHP
+		rl.DrawText(fmt.Sprintf("IV: %.2f", invuln.IvCurrSec), 0, 26, 24, invulnColor)
+		rl.DrawText(fmt.Sprintf("CD: %.2f", invuln.IvCDCurrSec), 0, 52, 24, rl.Yellow)
 		rl.DrawCircleLinesV(s.Center, spaceShipRadius, rl.Yellow)
 
 		rl.EndDrawing()
